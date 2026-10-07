@@ -1,0 +1,107 @@
+---
+title: '03_estimation'
+---
+
+```{r setup}
+library(tidyverse)
+
+rm(list = ls())
+
+options("scipen" = 100, "digits" = 4)
+
+```
+
+```{r}
+estimate_wle <- function(data, states, ages, hours = F) {
+
+table_wle <- data %>% mutate(outcome = ifelse(status %in% states, 1, 0))
+
+if (length(states) == 1) table_wle <- table_wle %>% filter(!is.na(status))
+
+table_wle <- table_wle %>%
+  group_by(country, country_code, country_group, gender, cohort_two, age) %>%
+  summarise(
+    Total = sum(1 * weight, na.rm = T),
+    Employed = sum(outcome * weight, na.rm = T),
+    Contr = weighted.mean(outcome, na.rm = T),
+    TotalVar = Total * Contr * (1 - Contr),
+    Time = weighted.mean(working_hours_usual, na.rm = T),
+    survival = mean(survival, na.rm = T),
+    cohort = if (hours) min(cohort) else max(cohort)) %>%
+  ungroup()
+
+table_wle <- table_wle %>%
+  mutate(Time = ifelse(is.na(Time), 0, Time),
+         Time = ifelse(Time > 40, 1, Time / 40),
+         Time = if (hours) Time else 1)
+
+table_wle <- table_wle %>%
+  mutate(Contr = ifelse(Total > 0, Employed / Total * Time * survival, 0),
+         Sd1   = (Contr * (1 - Contr)) / TotalVar)
+
+# projections for partially observed cohorts
+table_wle <- table_wle %>%
+  group_by(country, gender, cohort_two) %>%
+  mutate(projected = 0) %>%
+  complete(age = ages) %>%
+  mutate(projected = ifelse(is.na(projected), 1, 0)) %>%
+  arrange(country, gender, age, cohort_two) %>%
+  filter(!is.na(cohort_two))
+
+table_wle <- table_wle %>% group_by(country, gender) %>% fill(everything(), .direction = c("down"))
+
+table_wle <- table_wle %>%
+  group_by(country, country_code, country_group, gender, cohort_two) %>%
+  mutate(WLE = sum(Contr), Var = sum(Sd1)) %>%
+  filter(cohort == min(cohort)) %>%
+  ungroup() %>%
+  mutate(low = WLE - 1.96 * sqrt(Var), hig = WLE + 1.96 * sqrt(Var)) %>%
+  select(country, country_code, country_group, gender, cohort_two, cohort, WLE, Var, low, hig, projected) %>%
+  unique() %>%
+  arrange(country, gender, cohort_two, projected)
+
+return(table_wle)
+
+}
+
+estimate_all <- function(data, ages) {
+
+wle <- estimate_wle(data, "Employed", ages) %>% mutate(var = "wle")
+wle_adjusted <- estimate_wle(data, "Employed", ages, hours = T) %>% mutate(var = "wle_adjusted")
+wyl_retirement <- estimate_wle(data, "Retired", ages) %>% mutate(var = "wyl_retirement")
+wyl_unemployment <- estimate_wle(data, "Unemployed", ages) %>% mutate(var = "wyl_unemployment")
+wyl_inactivity <- estimate_wle(data, c("Ill health", "Other"), ages) %>% mutate(var = "wyl_inactivity")
+
+results <- rbind(wle, wle_adjusted, wyl_retirement, wyl_unemployment, wyl_inactivity)
+
+results <- results %>% mutate(gender = if_else(gender == "Female population", "Women", "Men"))
+
+return(results)
+
+}
+
+```
+
+# Age group 55 to 64
+```{r}
+data <- readRDS("outputs/sample_55_64.rds")
+
+results <- estimate_all(data, 55:64)
+
+write.csv(results, "outputs/estimates_55_64.csv", row.names = F)
+
+rm(data, results)
+
+```
+
+# Age group 65 to 74
+```{r}
+data <- readRDS("outputs/sample_65_74.rds")
+
+results <- estimate_all(data, 65:74)
+
+write.csv(results, "outputs/estimates_65_74.csv", row.names = F)
+
+rm(data, results)
+
+```

@@ -1,0 +1,110 @@
+---
+title: '05_regressions'
+---
+
+```{r setup}
+library(tidyverse)
+
+rm(list = ls())
+
+options("scipen" = 100, "digits" = 4)
+
+set.seed(20240101)
+
+```
+
+```{r}
+results <- read.csv("outputs/estimates_55_64.csv")
+
+data <- results %>%
+  filter(projected == 0) %>%
+  select(var, country, gender, cohort_two, WLE) %>%
+  unique() %>%
+  pivot_wider(names_from = var, values_from = WLE) %>%
+  rename("wle_a" = "wle_adjusted", "wyl_ret" = "wyl_retirement", "wyl_une" = "wyl_unemployment", "wyl_ina" = "wyl_inactivity")
+
+data <- data %>%
+  group_by(gender) %>%
+  complete(country, cohort_two) %>%
+  group_by(gender, country) %>%
+  arrange(cohort_two, .by_group = T) %>%
+  mutate(
+    wle_lag = dplyr::lag(wle, 1),
+    wle_change = wle - dplyr::lag(wle, 1),
+
+    wle_a_lag = dplyr::lag(wle_a, 1),
+    wle_a_change = wle_a - dplyr::lag(wle_a, 1),
+
+    wyl_ret_lag = dplyr::lag(wyl_ret, 1),
+    wyl_ret_change = wyl_ret - dplyr::lag(wyl_ret, 1),
+
+    wyl_une_lag = dplyr::lag(wyl_une, 1),
+    wyl_une_change = wyl_une - dplyr::lag(wyl_une, 1),
+
+    wyl_ina_lag = dplyr::lag(wyl_ina, 1),
+    wyl_ina_change = wyl_ina - dplyr::lag(wyl_ina, 1)) %>%
+  ungroup() %>%
+  filter(!is.na(wle_change))
+
+```
+
+```{r}
+models <- c(
+  "wle_a_change ~ wle_change + wle_a_lag + factor(country) + factor(cohort_two)",
+  "wyl_ret_change ~ wle_change + wyl_ret_lag + factor(country) + factor(cohort_two)",
+  "wyl_une_change ~ wle_change + wyl_une_lag + factor(country) + factor(cohort_two)",
+  "wyl_ina_change ~ wle_change + wyl_ina_lag + factor(country) + factor(cohort_two)")
+
+coefs <- function(df) {
+  sapply(models, function(m) coef(lm(as.formula(m), data = df))["wle_change"])
+}
+
+table_1 <- NULL
+
+for (g in c("Men", "Women")) {
+
+data_g <- data %>% filter(gender == g)
+
+# bootstrap: countries and observations within countries drawn with replacement
+boot <- NULL
+
+for (b in 1:1000) {
+
+  countries <- sample(unique(data_g$country), replace = T)
+
+  data_b <- NULL
+
+  for (j in 1:length(countries)) {
+    data_c <- data_g %>% filter(country == countries[j])
+    data_c <- data_c[sample(nrow(data_c), replace = T), ]
+    data_c$country <- paste0(countries[j], "_", j)
+    data_b <- rbind(data_b, data_c)
+  }
+
+  boot <- rbind(boot, coefs(data_b))
+
+}
+
+table_g <- data.frame(
+  gender = g,
+  model = c("wle_a", "wyl_ret", "wyl_une", "wyl_ina"),
+  coef = coefs(data_g),
+  se = apply(boot, 2, sd, na.rm = T),
+  n = sapply(models, function(m) nobs(lm(as.formula(m), data = data_g))))
+
+table_1 <- rbind(table_1, table_g)
+
+}
+
+table_1 <- table_1 %>%
+  mutate(
+    p = round(2 * pnorm(-abs(coef / se)), 4),
+    stars = case_when(p < 0.001 ~ "***", p < 0.01 ~ "**", p < 0.05 ~ "*", T ~ ""))
+
+rownames(table_1) <- NULL
+
+write.csv(table_1, "outputs/table1_regressions.csv", row.names = F)
+
+table_1
+
+```

@@ -1,0 +1,125 @@
+---
+title: '02_sample'
+---
+
+```{r setup}
+library(tidyverse)
+
+rm(list = ls())
+
+```
+
+# Add survival rates from HMD
+```{r}
+mortality_overview <- data.frame(
+  country = c("AT", "BE", "BG", "CH", "CZ", "DE", "DK", "EE", "ES", "FI", "FR", "EL", "HU", "IE", "IS", "IT", "LT", "LU", "LV", "NL", "NO", "PL", "PT", "SI", "SK", "SE", "UK"),
+  file = c("AUT", "BEL", "BGR", "CHE", "CZE", "DEUTNP", "DNK", "EST", "ESP", "FIN", "FRATNP", "GRC", "HUN", "IRL", "ISL", "ITA", "LTU", "LUX", "LVA", "NLD", "NOR", "POL", "PRT", "SVN", "SVK", "SWE", "GBRTENW"))
+
+mortality = data.frame()
+
+for (i in 1:nrow(mortality_overview)) {
+
+  mortality_table <- read.table(paste0("data/hmd/", mortality_overview$file[i], ".cMx_1x1.txt"), skip = 3, header = F, na.strings = ".")
+
+  colnames(mortality_table) <- c("cohort", "age", "female", "male", "total")
+
+  mortality_table$country <- mortality_overview$country[i]
+
+  mortality <- rbind(mortality, mortality_table)
+
+}
+
+mortality <- mortality %>%
+  select(country, cohort, age, female, male) %>%
+  pivot_longer(c(female, male), names_to = "gender", values_to = "mortality_rate") %>%
+  mutate(gender = case_when(
+    gender %in% c("male") ~ "Male population",
+    gender %in% c("female") ~ "Female population"))
+
+mortality$age <- suppressWarnings(as.numeric(mortality$age))
+
+survival <- mortality %>%
+  filter(age >= 54) %>%
+  arrange(country, gender, cohort, age) %>%
+  group_by(country, gender, cohort) %>%
+  mutate(survival = ifelse(age == 54, 1, 1 - mortality_rate)) %>%
+  reframe(
+    survival = cumprod(survival),
+    age = age + 1)
+
+survival <- survival %>% filter(cohort %in% c(1900:1990) & age %in% c(55:74))
+
+rm(mortality_overview, mortality_table, mortality, i)
+
+```
+
+```{r}
+prepare_sample <- function(data, ages, complete_until, exclude) {
+
+data <- data %>% left_join(survival, by = c("country", "gender", "cohort", "age"))
+
+data <- data %>% filter(age %in% ages)
+
+data <- data %>%
+  mutate(
+    working_hours = ifelse(is.na(working_hours_usual), 0, working_hours_usual),
+    working_hours = ifelse(working_hours >= 40, 1, working_hours / 40),
+    weight = ifelse(is.na(weight), 1, weight))
+
+# country-cohorts with at least 100 observations and max. 10% missings at each age
+table <- data %>%
+  mutate(missing_hrs = ifelse(status == "Employed" & is.na(working_hours_usual), 1, 0)) %>%
+  group_by(country) %>%
+  filter(cohort >= min(year) - min(ages)) %>%
+  group_by(country, cohort, gender, age) %>%
+  summarise(total = n(),
+            missing_age = mean(is.na(age)),
+            missing_sex = mean(is.na(gender)),
+            missing_emp = mean(is.na(status)),
+            missing_srv = mean(is.na(survival)),
+            missing_hrs = mean(missing_hrs, na.rm = T)) %>%
+  filter(total >= 100 & missing_age <= 0.1 & missing_sex <= 0.1 & missing_emp <= 0.1 & missing_srv <= 0.1 & missing_hrs <= 0.1)
+
+table <- table %>% group_by(country, cohort, gender) %>% filter(n() == length(ages) | cohort > complete_until)
+
+table$id <- paste0(table$country, "_", table$gender, "_", table$cohort)
+
+data$id <- paste0(data$country, "_", data$gender, "_", data$cohort)
+
+data <- data %>% filter(id %in% table$id)
+
+data <- data %>% filter(!paste0(country, "_", cohort) %in% exclude & !country %in% exclude)
+
+data <- data %>%
+  select(country, country_code, country_group, gender, age, year, cohort, cohort_two, education, status, working_hours, working_hours_usual, survival, weight) %>%
+  arrange(country, gender, cohort, age)
+
+return(data)
+
+}
+
+```
+
+# Age group 55 to 64
+```{r}
+data <- readRDS("outputs/lfs_55_64.rds")
+
+data <- prepare_sample(data, ages = 55:64, complete_until = 1955, exclude = c("DK_1928", "DK_1929", "LU"))
+
+saveRDS(data, "outputs/sample_55_64.rds")
+
+rm(data)
+
+```
+
+# Age group 65 to 74
+```{r}
+data <- readRDS("outputs/lfs_65_74.rds")
+
+data <- prepare_sample(data, ages = 65:74, complete_until = 1946, exclude = c("LU"))
+
+saveRDS(data, "outputs/sample_65_74.rds")
+
+rm(data)
+
+```

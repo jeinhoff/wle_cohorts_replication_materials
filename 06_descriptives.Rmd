@@ -1,0 +1,115 @@
+---
+title: '06_descriptives'
+---
+
+```{r setup}
+library(tidyverse)
+library(openxlsx)
+
+rm(list = ls())
+
+options("scipen" = 100, "digits" = 4)
+
+```
+
+# Sample statistics and observation counts in cohorts
+```{r}
+years_to_text <- function(x) {
+  x <- sort(unique(x))
+  runs <- split(x, cumsum(c(1, diff(x) != 1)))
+  paste(sapply(runs, function(r) ifelse(length(r) == 1, r, paste(min(r), "-", max(r)))), collapse = ", ")
+}
+
+tables <- list()
+
+for (group in c("55_64", "65_74")) {
+
+data_raw <- readRDS(paste0("outputs/lfs_", group, ".rds"))
+
+data <- readRDS(paste0("outputs/sample_", group, ".rds"))
+
+table_all <- data_raw %>%
+  group_by(country) %>%
+  summarise(survey_years = years_to_text(year),
+            total_observations = n())
+
+table_incl <- data %>%
+  mutate(
+    missing_status = ifelse(is.na(status), 1, 0),
+    missing_hours = ifelse(!is.na(status) & status == "Employed" & is.na(working_hours_usual), 1, 0),
+    missing = ifelse(missing_status == 1 | missing_hours == 1, 1, 0)) %>%
+  group_by(country) %>%
+  summarise(included_observations = n(),
+            included_cohorts = years_to_text(cohort),
+            missing = mean(missing) * 100,
+            missing_status = mean(missing_status) * 100,
+            missing_hours = mean(missing_hours) * 100)
+
+tables[[paste0("sample_stats_", group)]] <- table_all %>% left_join(table_incl, by = "country")
+
+table <- table(data$country, data$cohort_two) %>% as.data.frame() %>% pivot_wider(names_from = Var2, values_from = Freq)
+
+table$Total <- rowSums(table[, -1])
+
+tables[[paste0("cohort_obs_", group)]] <- table %>% rename("country" = "Var1")
+
+}
+
+write.xlsx(tables, "outputs/tables_A3_A6.xlsx")
+
+rm(data_raw, data, table_all, table_incl, table, tables, group)
+
+```
+
+# Prevalence of activity states, working hours and survival by age
+```{r, warning = F}
+data <- rbind(readRDS("outputs/sample_55_64.rds"), readRDS("outputs/sample_65_74.rds"))
+
+data <- data %>% filter(!is.na(status))
+
+table <- data %>%
+  mutate(employed = ifelse(status == "Employed", 1, 0)) %>%
+  group_by(country, gender, cohort_two, age) %>%
+  summarise(
+    employment = weighted.mean(status == "Employed", weight),
+    retirement = weighted.mean(status == "Retired", weight),
+    unemployment = weighted.mean(status == "Unemployed", weight),
+    inactivity = weighted.mean(status %in% c("Ill health", "Other"), weight),
+    hours = ifelse(sum(employed) > 0, weighted.mean(working_hours, weight * employed), NA),
+    survival = mean(survival, na.rm = T)) %>%
+  ungroup() %>%
+  mutate(cohort = as.numeric(paste0("19", substr(cohort_two, 2, 3))))
+
+plot_age <- function(table, y, ylab) {
+
+ggplot(table, aes(x = age, y = .data[[y]], group = cohort_two, colour = cohort)) +
+  facet_wrap(~ country, ncol = 7) +
+  geom_line(linewidth = 0.3) +
+  geom_vline(xintercept = 64.5, linetype = "dashed") +
+  theme_linedraw(base_family = "sans") +
+  theme(
+    strip.background = element_rect(fill = "gray95", colour = "black"),
+    strip.text = element_text(colour = "black", face = "bold"),
+    panel.grid.minor = element_blank(),
+    legend.position = "bottom") +
+  scale_colour_viridis_c("Birth cohort") +
+  scale_x_continuous("Age", breaks = seq(55, 75, 5)) +
+  scale_y_continuous(ylab, limits = c(0, 1))
+
+}
+
+vars <- c("employment", "retirement", "unemployment", "inactivity", "hours", "survival")
+ylabs <- c("Prevalence of employment", "Prevalence of retirement", "Prevalence of unemployment",
+           "Prevalence of inactivity", "Average normalised working hours", "Survival rate")
+
+for (i in 1:length(vars)) {
+
+  p <- plot_age(table %>% filter(gender == "Female population"), vars[i], ylabs[i])
+  ggsave(paste0("outputs/figA", 4 + 2 * i, "_", vars[i], "_female.tiff"), p, width = 10, height = 7)
+
+  p <- plot_age(table %>% filter(gender == "Male population"), vars[i], ylabs[i])
+  ggsave(paste0("outputs/figA", 5 + 2 * i, "_", vars[i], "_male.tiff"), p, width = 10, height = 7)
+
+}
+
+```

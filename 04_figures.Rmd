@@ -1,0 +1,111 @@
+---
+title: '04_figures'
+---
+
+```{r setup}
+library(tidyverse)
+library(ggflags)
+library(ggh4x)
+
+rm(list = ls())
+
+```
+
+```{r}
+plot_wle <- function(table_wle, ylab, ylim = c(0, 8)) {
+
+ggplot(table_wle, aes(x = as.factor(cohort_two), y = WLE, group = country_code, country = country_code)) +
+  facet_grid(gender ~ country_group) +
+  # Main data layers
+  geom_point(data = table_wle %>% filter(projected == 0),
+             size = 0.3) +
+  geom_ribbon(aes(ymin = low, ymax = hig, alpha = 1)) +
+  geom_line(data = table_wle %>% filter(projected == 0),
+            linewidth = 0.3) +
+  geom_line(data = table_wle,
+            linewidth = 0.4, linetype = "dotted") +
+  # Flags at start and end
+  geom_flag(data = table_wle %>% group_by(country_code, gender) %>% filter(cohort == min(cohort)) %>% slice(1),
+            size = 3) +
+  geom_flag(data = table_wle %>% group_by(country_code, gender) %>% filter(cohort_two == max(cohort_two)) %>% slice(1),
+            size = 3) +
+  # Theme and Styling
+  theme_linedraw(base_family = "sans") +
+  theme(
+    strip.background = element_rect(fill = "gray95", colour = "black"),
+    strip.text = element_text(colour = "black", face = "bold", size = 10),
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank(),
+    panel.grid.minor.y = element_blank(),
+    axis.title.x = element_text(size = 12, face = "bold", colour = "black"),
+    axis.title.y = element_text(size = 12, face = "bold", colour = "black"),
+    axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 8, colour = "black"),
+    axis.text.y = element_text(size = 9, colour = "black"),
+    axis.line = element_line(),
+    axis.ticks = element_line(),
+    legend.position = "none"
+  ) +
+  guides(x = "axis_minor", y = "axis_minor") +
+  coord_cartesian(ylim = ylim) +
+  scale_y_continuous(ylab, breaks = seq(-10, 10, 1)) +
+  scale_x_discrete("Birth Cohort", labels = function(x) ifelse(seq_along(x) %% 2 == 0, x, "")) +
+  scale_alpha(range = c(0.01, 0.1))
+
+}
+
+read_results <- function(file) {
+
+results <- read.csv(file)
+
+results <- results %>%
+  mutate(
+    gender = fct_relevel(as.factor(gender), "Women"),
+    country_group = factor(country_group, levels = c("Northern Europe", "Western Europe", "Southern Europe", "Central and Eastern Europe")))
+
+return(results)
+
+}
+
+```
+
+# Figures 1 to 5: Age group 55 to 64
+```{r, warning = F}
+results <- read_results("outputs/estimates_55_64.csv")
+
+p <- plot_wle(results %>% filter(var == "wle"), "WLE (years)")
+ggsave("outputs/fig1_wle_55_64.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wle_adjusted"), "aWLE (FTE years)")
+ggsave("outputs/fig2_wle_adjusted_55_64.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_retirement"), "WYL (years)")
+ggsave("outputs/fig3_wyl_retirement_55_64.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_unemployment"), "WYL (years)")
+ggsave("outputs/fig4_wyl_unemployment_55_64.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_inactivity"), "WYL (years)")
+ggsave("outputs/fig5_wyl_inactivity_55_64.tiff", p, width = 8.5, height = 5.7)
+
+```
+
+# Figures A1 to A5: Age group 65 to 74
+```{r, warning = F}
+results <- read_results("outputs/estimates_65_74.csv")
+
+p <- plot_wle(results %>% filter(var == "wle"), "WLE (years)")
+ggsave("outputs/figA1_wle_65_74.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wle_adjusted"), "aWLE (FTE years)")
+ggsave("outputs/figA2_wle_adjusted_65_74.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_retirement"), "WYL (years)", ylim = c(0, 10))
+ggsave("outputs/figA3_wyl_retirement_65_74.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_unemployment"), "WYL (years)")
+ggsave("outputs/figA4_wyl_unemployment_65_74.tiff", p, width = 8.5, height = 5.7)
+
+p <- plot_wle(results %>% filter(var == "wyl_inactivity"), "WYL (years)")
+ggsave("outputs/figA5_wyl_inactivity_65_74.tiff", p, width = 8.5, height = 5.7)
+
+```

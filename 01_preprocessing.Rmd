@@ -1,0 +1,239 @@
+---
+title: '01_preprocessing'
+---
+
+```{r setup}
+library(tidyverse)
+
+rm(list = ls())
+
+dir.create("outputs", showWarnings = F)
+
+```
+
+```{r}
+files <- sort(list.files("data/eurostat", pattern = "\\.csv$", recursive = T, full.names = T, ignore.case = T))
+
+read_lfs <- function(age_grp) {
+
+data_complete = NULL
+
+for (i in files) {
+
+data <- read.csv(i)
+
+data <- data %>%
+  select(COUNTRY, YEAR, SEX, AGE, AGE_GRP, ILOSTAT, EMPSTAT, MAINSTAT, CONTRHRS, HWUSUAL, HATLEV1D, COEFFY, SEEKREAS, WANTREAS, LEAVREAS) %>%
+  filter(AGE_GRP %in% age_grp) %>%
+  mutate(across(everything(), as.character))
+
+colnames(data) <- c("country", "year", "sex", "age", "age_group", "status_ilo", "status_emp", "status_self", "working_hours_contract", "working_hours_usual", "education", "weight", "seek_reas", "want_reas", "leave_reas")
+
+data_complete = rbind(data_complete, data)
+
+rm(data)
+
+message(i)
+
+}
+
+data <- data_complete
+
+rm(data_complete)
+
+# status
+data <- data %>%
+  mutate(
+    in_labour_force = case_when(
+      status_ilo %in% c("1", "2") ~ "1",
+      status_ilo %in% c("3") ~ "0",
+      T ~ NA_character_),
+    employed = case_when(
+      status_emp %in% c("1") ~ 1,
+      status_emp %in% c("2") ~ 0,
+      T ~ NA_real_))
+
+# sex
+data <- data %>%
+  mutate(gender = case_when(
+    sex %in% c("1") ~ "Male population",
+    sex %in% c("2") ~ "Female population",
+    T ~ NA_character_))
+
+# education
+data <- data %>%
+  mutate(education = case_when(
+    education %in% c("L") ~ "low",
+    education %in% c("M") ~ "medium",
+    education %in% c("H") ~ "high",
+    T ~ NA_character_))
+
+# working hours
+data <- data %>%
+  mutate(working_hours_contract = ifelse(working_hours_contract == 99, NA, working_hours_contract)) %>%
+  mutate(working_hours_usual = ifelse(working_hours_usual %in% c(97, 99), NA, working_hours_usual)) %>%
+  mutate(
+    working_hours_contract = as.numeric(working_hours_contract),
+    working_hours_usual = as.numeric(working_hours_usual),
+    weight = as.numeric(weight))
+
+# age and cohort
+data$year <- as.numeric(data$year)
+
+data$age <- as.numeric(data$age)
+
+data$cohort <- data$year - data$age
+
+data <- data %>%
+  mutate(
+    cohort_first = ifelse(cohort %% 2 == 1, cohort, cohort - 1),
+    cohort_two = ifelse(is.na(cohort), NA, paste0("'", substr(cohort_first, 3, 4), "/'", substr(cohort_first + 1, 3, 4))))
+
+# countries
+data <- data %>%
+  mutate(country_code = case_when(
+    country %in% c("AT") ~ "at",
+    country %in% c("BE") ~ "be",
+    country %in% c("BG") ~ "bg",
+    country %in% c("CH") ~ "ch",
+    country %in% c("CY") ~ "cy",
+    country %in% c("CZ") ~ "cz",
+    country %in% c("DE") ~ "de",
+    country %in% c("DK") ~ "dk",
+    country %in% c("EE") ~ "ee",
+    country %in% c("EL") ~ "gr",
+    country %in% c("ES") ~ "es",
+    country %in% c("FI") ~ "fi",
+    country %in% c("FR") ~ "fr",
+    country %in% c("HR") ~ "hr",
+    country %in% c("HU") ~ "hu",
+    country %in% c("IE") ~ "ie",
+    country %in% c("IS") ~ "is",
+    country %in% c("IT") ~ "it",
+    country %in% c("LT") ~ "lt",
+    country %in% c("LU") ~ "lu",
+    country %in% c("LV") ~ "lv",
+    country %in% c("NL") ~ "nl",
+    country %in% c("NO") ~ "no",
+    country %in% c("PL") ~ "pl",
+    country %in% c("PT") ~ "pt",
+    country %in% c("RO") ~ "ro",
+    country %in% c("SE") ~ "se",
+    country %in% c("SI") ~ "si",
+    country %in% c("SK") ~ "sk",
+    country %in% c("UK") ~ "gb"))
+
+data <- data %>%
+  mutate(country_group = case_when(
+    country %in% c("FI", "NO", "SE", "DK") ~ "Northern Europe",
+    country %in% c("AT", "BE", "CH", "DE", "FR", "LU", "UK", "NL", "IE") ~ "Western Europe",
+    country %in% c("EL", "ES", "IT", "PT", "CY") ~ "Southern Europe",
+    country %in% c("BG", "EE", "HU", "LT", "LV", "PL", "RO", "SI", "CZ", "HR", "SK") ~ "Central and Eastern Europe"))
+
+# Main activity status (self-defined) MAINSTAT
+# 1 Employed
+# 2 Unemployed
+# 3 Retired
+# 4 Unable to work due to long-standing health problems
+# 5 Student, pupil
+# 6 Fulfilling domestic tasks
+# 7 Compulsory military or civilian service
+# 8 Other
+data <- data %>%
+  mutate(status_self = case_when(
+    status_self %in% c(1) ~ "Employed",
+    status_self %in% c(2) ~ "Unemployed",
+    status_self %in% c(3) ~ "Retired",
+    status_self %in% c(4) ~ "Ill health",
+    status_self %in% c(5, 6, 7, 8) ~ "Other",
+    T ~ "missing"))
+
+# Main reason for not searching for employment SEEKREAS
+# 1 No suitable job is available
+# 2 Education or training
+# 3 Own illness or disability
+# 4 Care responsibilities
+# 5 Other family reasons
+# 6 Other personal reasons
+# 7 Awaiting recall to work (lay-off)
+# 8 Other reasons
+data <- data %>%
+  mutate(seek_reas = case_when(
+    seek_reas %in% c(1, 7) ~ "Unemployed",
+    seek_reas %in% c(3) ~ "Ill health",
+    seek_reas %in% c(2, 4, 5, 6, 8) ~ "Other",
+    T ~ "missing"))
+
+# Main reason for not wanting to work WANTREAS
+# 1 Education or training
+# 2 Own illness or disability
+# 3 Care responsibilities
+# 4 Other family reasons
+# 5 Other personal reasons
+# 6 Retirement
+# 7 Other reasons
+data <- data %>%
+  mutate(want_reas = case_when(
+    want_reas %in% c(6) ~ "Retired",
+    want_reas %in% c(2) ~ "Ill health",
+    want_reas %in% c(1, 3, 4, 5, 7) ~ "Other",
+    T ~ "missing"))
+
+# Main reason for leaving last job or business LEAVREAS
+# 01 Dismissal or business closed for economic reasons
+# 02 A fixed-term job has ended
+# 03 Care responsibilities
+# 04 Other family reasons
+# 05 Education or training
+# 06 Own illness and disability
+# 07 Retirement
+# 08 Other personal reasons
+# 09 Other reasons
+data <- data %>%
+  mutate(leave_reas = case_when(
+    leave_reas %in% c(1, 2) ~ "Unemployed",
+    leave_reas %in% c(7) ~ "Retired",
+    leave_reas %in% c(6) ~ "Ill health",
+    leave_reas %in% c(3, 4, 5, 8, 9) ~ "Other",
+    T ~ "missing"))
+
+data <- data %>%
+  mutate(status = case_when(
+    employed == 1 ~ "Employed",
+    employed == 0 & in_labour_force == 1 ~ "Unemployed",
+    employed == 0 & (status_self == "Retired" | want_reas == "Retired" | leave_reas == "Retired") ~ "Retired",
+    employed == 0 & (status_self == "Unemployed" | seek_reas == "Unemployed" | leave_reas == "Unemployed") ~ "Unemployed",
+    employed == 0 & (status_self == "Ill health" | seek_reas == "Ill health" | want_reas == "Ill health" | leave_reas == "Ill health") ~ "Ill health",
+    employed == 0 & (status_self == "Other" | seek_reas == "Other" | want_reas == "Other" | leave_reas == "Other") ~ "Other"))
+
+data$working_hours_usual <- ifelse(is.na(data$working_hours_usual) & !is.na(data$working_hours_contract), data$working_hours_contract, data$working_hours_usual)
+
+data <- data %>% select(country, country_code, country_group, gender, year, cohort, cohort_two, age, status, working_hours_usual, education, weight)
+
+data <- data %>% arrange(country, gender, cohort, age)
+
+return(data)
+
+}
+
+```
+
+# Age group 55 to 64
+```{r}
+data <- read_lfs(age_grp = c("Y55-59", "Y60-64"))
+
+saveRDS(data, "outputs/lfs_55_64.rds")
+
+rm(data)
+
+```
+
+# Age group 65 to 74
+```{r}
+data <- read_lfs(age_grp = c("Y65-69", "Y70-74"))
+
+saveRDS(data, "outputs/lfs_65_74.rds")
+
+rm(data)
+
+```
